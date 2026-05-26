@@ -12,9 +12,12 @@ References:
 import time
 from struct import unpack
 
-# Default I2C addresses (SD0 pin high)
+# Default I2C addresses match the BMI088 integrated on the Grabette/Casquette
+# HAT, which straps SDO0 high (accel at 0x19) and SDO2 low (gyro at 0x68).
+# A standalone BMI088 breakout with both SDO pins high would be at
+# 0x19 / 0x69 — override via the BMI088 / BMI088Capture constructors.
 DEFAULT_ACCEL_ADDR = 0x19
-DEFAULT_GYRO_ADDR = 0x69
+DEFAULT_GYRO_ADDR = 0x68
 
 # Accelerometer registers
 ACC_CHIP_ID = 0x00

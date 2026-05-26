@@ -152,6 +152,50 @@ Run per-device SLAM as today, but **inject ArUco observations as loop-closure fa
 
 This is a more incremental improvement and could be done independently per device, then combined with Option A or B for cross-device fusion.
 
+#### Option B′ — ArUco-only direct relative pose (refinement of B, May 2026)
+
+Option B above assumes simultaneous visibility is rare and treats it as a one-shot calibration anchor. If, instead, **dual-marker visibility is the norm rather than the exception** during typical bimanual manipulation, Option B becomes the *primary* mechanism — not just an anchor — and the entire bimanual pipeline simplifies sharply.
+
+The key observation: for policy training, the only spatial quantity that actually matters is the **inter-gripper relative pose** `T_grabA_grabB(t)`. When both markers are visible in the casquette frame at time `t`, that quantity is directly measured by composing two ArUco detections:
+
+```
+T_grabA_grabB(t) = inv(T_casq_grabA(t)) · T_casq_grabB(t)
+```
+
+The casquette's own pose appears on both sides and inverts away. Implications:
+
+- **No casquette SLAM is needed at any timestep** — Option A's hardest dependency (Pi Zero 2W VIO) vanishes.
+- **No common world frame is needed** — only relative pose is consumed downstream (consistent with §8).
+- **No grabette SLAM is needed for this quantity at the dual-visibility timesteps** — although it remains useful for filling the gaps (see below).
+
+**Handling visibility gaps.** When only one or zero markers are visible at `t`, fall back to per-grabette ego-SLAM (the OAK-D rtabmap stack already in production for Grabette V2):
+
+```
+T_grabA_grabB(t) ≈ T_grabA_grabB(t_anchor) · (per-grabette ego-motion between t_anchor and t)
+```
+
+where `t_anchor` is the most recent dual-visibility frame. Per-grabette rtabmap drift over a typical demo length (~30 s) is ~1 cm; re-anchoring every time both markers are simultaneously visible prevents drift from accumulating.
+
+**Required visibility rate.** For a target inter-gripper error `ε` with per-grabette drift `d`, the longest tolerable gap between dual-visibility anchors is roughly `ε / d`. With `d ≈ 0.03 cm/s` and `ε = 1 cm`, that's ~30 s — i.e. one anchor per demo is the bare minimum. In practice even sporadic dual visibility (a handful of times per demo) keeps error well below 1 cm. The "most-of-the-time" regime the user posits is comfortably sufficient.
+
+**Marker layout implications.** Each grabette needs **multiple markers** biased toward facing the head-mounted casquette during normal use. The back of the grabette body (the user-facing side, opposite the gripper-cam-pointing direction) is the most reliable face during hand-in-front-of-user poses; a top-facing marker covers "user looking down at hand" poses. Two markers per grabette with distinct ArUco IDs (one per device, one per face) is a reasonable starting layout.
+
+**Failure modes.**
+
+| Failure | Effect |
+|---|---|
+| Both markers occluded for a long stretch | Per-grabette ego-SLAM drift accumulates. Detectable from missing observations — can flag the demo as low-quality and drop or retrain on subset. |
+| Only one marker visible | No new direct measurement, but the most-recent `T_grabA_grabB` remains valid; per-grabette SLAM bridges with bounded error. |
+| Dual-visible but pose noisy (distance, motion blur) | Average ArUco detections over short windows when both are visible; gate on IMU motion (the same approach used in the teleop bridge) to reject blurry frames. |
+| Mistaken marker (left/right swap) | Use distinct ArUco IDs per grabette; verify ID matches expected device at detection time. |
+
+**Prerequisites that move to the critical path.**
+
+- **Casquette camera intrinsic calibration** becomes a hard requirement (solvePnP accuracy depends on it directly). A ChArUco-target calibration session of the casquette's fisheye camera, using the same OpenCV recipe as the Grabette, is the next concrete blocker.
+- **Marker → grabette body extrinsics** (one per marker): the small mechanical offset between each marker's center and the grabette's reference frame, measured once and baked into per-device config.
+
+This is essentially **Option B + per-grabette-SLAM gap-filling**, with the casquette-VIO leg of Option A removed entirely. It is a strict simplification of A whenever the dual-visibility assumption holds, and a strict generalization of B (whose "anchor at start only" stance was overly conservative).
+
 ## 6. Time synchronization (orthogonal but related)
 
 Whichever option above, the three devices need a common timebase:
@@ -162,7 +206,7 @@ Whichever option above, the three devices need a common timebase:
 
 ## 7. Recommended path
 
-Without committing yet:
+Without committing yet. **Updated recommendation (May 2026)**: start with Option B′ (§5), which sidesteps the casquette-VIO question if dual-marker visibility is frequent enough. Treat the steps below as the original investigation path; the casquette-VIO experiment (step 1) becomes optional rather than blocking.
 
 1. **First experiment**: validate that casquette VIO (option A, offline) actually works on the casquette's recorded mp4+IMU using the same Docker rtabmap stack as Grabette. If yes — Option A is viable.
 2. **In parallel**: try Option B as a calibration anchor: collect a short test where the user holds both grabettes in casquette view at the start, then measure `tx_grabA_grabB` from those frames and from per-grabette SLAMs continued from there. Check drift over a 30s demo.
@@ -206,6 +250,7 @@ millimeter accuracy.
 |---|---|---|---|---|---|
 | A — Casquette VIO + per-device SLAM, glued by ArUco | Yes (offline) | Once per demo + sparse retries | Moderate | Good | Needs casquette VIO to work |
 | B — Casquette as multi-marker observer (no SLAM) | No | Both grabettes simultaneously visible | Low | Lower (sparse measurements) | Good as one-shot calibration anchor |
+| **B′ — ArUco-only, gaps filled by per-grabette SLAM** | **No** | **Most-of-the-time dual visibility + per-grabette SLAM bridges gaps** | **Low** | **Good (direct measurement when visible, bounded drift in gaps)** | **Currently recommended starting point** |
 | C — Joint multi-agent factor-graph SLAM | All devices integrated | Whatever is available enters as factors | High | Best | Most general, most engineering |
 | D — Per-device SLAM + ArUco loop closures | No casquette involvement | Each device sees markers | Moderate | Improved per-device | Independent of cross-device options |
 

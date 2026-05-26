@@ -76,8 +76,11 @@ def check_imu():
         else:
             fail(f"Accelerometer chip ID: 0x{accel_id:02X} (expected 0x1E)")
 
-        # Check gyroscope chip ID (should be 0x0F)
-        i2c.writeto_then_readfrom(0x69, bytes([0x00]), buf)
+        # Check gyroscope chip ID (should be 0x0F). HAT BMI088 has SDO2
+        # strapped low, putting the gyro at 0x68 (the BMI088 driver's
+        # DEFAULT_GYRO_ADDR matches).
+        from casquette.hardware.bmi088 import DEFAULT_GYRO_ADDR
+        i2c.writeto_then_readfrom(DEFAULT_GYRO_ADDR, bytes([0x00]), buf)
         gyro_id = buf[0]
         if gyro_id == 0x0F:
             ok(f"Gyroscope chip ID: 0x{gyro_id:02X}")
