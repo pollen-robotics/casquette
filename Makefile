@@ -57,4 +57,11 @@ install-systemd:
 	@echo "  journalctl -u casquette-bluetooth -f"
 
 check:
-	uv run python scripts/check_hardware.py
+	@if [ ! -x .venv/bin/python ]; then \
+		echo "No .venv/bin/python found. Run 'make install-rpi' first —"; \
+		echo "the venv must be created with --system-site-packages so apt's"; \
+		echo "picamera2 satisfies the dependency tree (otherwise uv tries to"; \
+		echo "build python-prctl from PyPI, which needs libcap-dev)."; \
+		exit 1; \
+	fi
+	.venv/bin/python scripts/check_hardware.py
