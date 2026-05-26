@@ -40,7 +40,9 @@ class RpiBackend(Backend):
         from casquette.hardware.imu import BMI088Capture
 
         self._sync = SyncManager()
-        self._camera = VideoCapture(self._sync, fps=FPS)
+        self._camera = VideoCapture(
+            self._sync, fps=FPS, exposure_us=settings.camera_exposure_us,
+        )
         self._imu = BMI088Capture(self._sync, sample_rate_hz=IMU_HZ, i2c_bus=self._imu_i2c_bus)
 
         logger.info("Initializing camera...")
@@ -192,7 +194,9 @@ class RpiBackend(Backend):
         # Re-initialize hardware for next capture
         from casquette.hardware.imu import BMI088Capture
         from casquette.hardware.camera import VideoCapture
-        self._camera = VideoCapture(self._sync, fps=FPS)
+        self._camera = VideoCapture(
+            self._sync, fps=FPS, exposure_us=settings.camera_exposure_us,
+        )
         self._imu = BMI088Capture(self._sync, sample_rate_hz=IMU_HZ, i2c_bus=self._imu_i2c_bus)
         self._camera.init_camera()
         self._imu.init_sensor()

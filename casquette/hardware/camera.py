@@ -32,12 +32,17 @@ class VideoCapture:
         fps: int = DEFAULT_FPS,
         bitrate: int = DEFAULT_BITRATE,
         preview: bool = False,
+        exposure_us: int = 0,
     ):
         self.sync = sync_manager
         self.resolution = resolution
         self.fps = fps
         self.bitrate = bitrate
         self.preview = preview
+        # 0 = use libcamera auto-exposure. Non-zero = fixed exposure in
+        # microseconds (auto-gain still applies). Useful to fight motion
+        # blur for ArUco-style detection.
+        self.exposure_us = exposure_us
 
         self._picam2 = None
         self._encoder = None
@@ -56,17 +61,27 @@ class VideoCapture:
         self._picam2 = Picamera2()
         frame_duration_us = int(1_000_000 / self.fps)
 
+        # Build controls dict; FrameDurationLimits forces CFR. Add a
+        # fixed ExposureTime if exposure_us > 0; libcamera's auto-gain
+        # still adjusts for ambient light at the fixed shutter speed.
+        controls: dict = {
+            "FrameDurationLimits": (frame_duration_us, frame_duration_us),
+        }
+        if self.exposure_us > 0:
+            controls["ExposureTime"] = int(self.exposure_us)
+            logger.info("Camera fixed exposure: %d µs", self.exposure_us)
+
         if self.preview:
             video_config = self._picam2.create_video_configuration(
                 main={"size": self.resolution, "format": "RGB888"},
                 lores={"size": (640, 480), "format": "YUV420"},
                 display="lores",
-                controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
+                controls=controls,
             )
         else:
             video_config = self._picam2.create_video_configuration(
                 main={"size": self.resolution, "format": "RGB888"},
-                controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
+                controls=controls,
             )
         self._picam2.configure(video_config)
         self._encoder = H264Encoder(bitrate=self.bitrate)

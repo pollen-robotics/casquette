@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     camera_fps: int = 46
     camera_resolution_w: int = 1296
     camera_resolution_h: int = 972
+    # Fixed exposure (microseconds). 8 ms is short enough to freeze
+    # typical head + hand motion for ArUco detection without going so
+    # dark that the auto-gain has to amplify noise into the image.
+    # Set to 0 to fall back to libcamera's auto-exposure (longer
+    # exposures in dim scenes — visibly more motion blur).
+    camera_exposure_us: int = 8000
 
     # IMU
     imu_hz: int = 200
