@@ -1,0 +1,23 @@
+[project]
+name = "casquette"
+version = "0.1.0"
+description = "POV camera data collection service for Raspberry Pi"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.13.1",
+]
+
+[project.optional-dependencies]
+rpi = [
+    "picamera2",
+    "adafruit-extended-bus",
+    "numpy<2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
