@@ -46,12 +46,27 @@ class RpiBackend(Backend):
         logger.info("Initializing camera...")
         self._camera.init_camera()
 
+        # IMU init is best-effort. The HAT-integrated BMI088 may be absent,
+        # mis-wired, or returning unexpected chip IDs during early bring-up
+        # of a fresh hardware build. Failing here used to kill the whole
+        # daemon (and hence the camera stream + REST API). We log + continue
+        # with self._imu = None instead — get_state() already handles that
+        # path (returns imu=None), and start_capture() will refuse if the
+        # caller tries to actually record without an IMU.
         logger.info("Initializing IMU...")
-        self._imu.init_sensor()
+        try:
+            self._imu.init_sensor()
+        except Exception as e:
+            logger.warning(
+                "IMU init failed (%s) — continuing in camera-only mode. "
+                "Capture endpoints will refuse until the IMU is fixed.",
+                e,
+            )
+            self._imu = None
 
         self._running = True
         self._start_time = time.time()
-        logger.info("RpiBackend started")
+        logger.info("RpiBackend started (IMU=%s)", "ok" if self._imu else "DISABLED")
 
     async def stop(self) -> None:
         if self._capturing:
@@ -90,6 +105,12 @@ class RpiBackend(Backend):
     async def start_capture(self, session_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")
+        if self._imu is None:
+            raise RuntimeError(
+                "Cannot capture: IMU is not available "
+                "(init failed at startup — camera stream still works, "
+                "but recording requires the IMU)."
+            )
 
         self._capture_session_dir = session_dir
         self._wall_clock_start = datetime.now(timezone.utc).isoformat()
