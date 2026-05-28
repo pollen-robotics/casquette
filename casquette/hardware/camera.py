@@ -27,6 +27,14 @@ class VideoCapture:
     DEFAULT_FPS = 46
     DEFAULT_BITRATE = 5_000_000
 
+    # Live background mux threads across all VideoCapture instances. We
+    # spawn one of these per stop() so the ffmpeg subprocess doesn't
+    # block the synchronous stop path; a new capture is allowed to start
+    # while a previous mux is still running (they work on different
+    # files, no conflict), but we log a warning so the operator knows
+    # back-to-back captures will be slower than usual on the Pi Zero 2W.
+    _live_mux_threads: list[threading.Thread] = []
+
     def __init__(
         self,
         sync_manager: SyncManager,
@@ -142,6 +150,22 @@ class VideoCapture:
         if not self.sync.is_started:
             raise RuntimeError("SyncManager must be started before video capture")
 
+        # Sweep dead background mux threads and warn if any are still
+        # running from previous captures. Stacking ffmpeg processes is
+        # safe (different files) but each one slows the others down on
+        # a single-core-ish Pi Zero 2W.
+        VideoCapture._live_mux_threads = [
+            t for t in VideoCapture._live_mux_threads if t.is_alive()
+        ]
+        n_live = len(VideoCapture._live_mux_threads)
+        if n_live:
+            logger.warning(
+                "start_recording: %d previous mux thread(s) still running; "
+                "this capture will start fine but ffmpeg will compete for CPU "
+                "until they finish",
+                n_live,
+            )
+
         self._output_path = Path(output_path)
         self._h264_path = self._output_path.with_suffix(".h264")
         self._frame_timestamps = []
@@ -190,6 +214,7 @@ class VideoCapture:
             name="mux-to-mp4",
         )
         self._mux_thread.start()
+        VideoCapture._live_mux_threads.append(self._mux_thread)
         t["mux_kickoff"] = 0  # ~0 ms — thread start is essentially instant
 
         logger.info(
