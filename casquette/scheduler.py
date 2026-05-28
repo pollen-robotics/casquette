@@ -122,16 +122,29 @@ class EpisodeScheduler:
             wait_s = (target_utc - datetime.now(timezone.utc)).total_seconds()
             if wait_s > 0:
                 await asyncio.sleep(wait_s)
+            # Measure the sync-precision skew at sleep-end, BEFORE the
+            # potentially-slow start_capture (~6 s for OAK-D init). The
+            # earlier formulation logged the skew AFTER start_capture,
+            # which conflated NTP precision with hardware init time.
+            sleep_end_skew_ms = (
+                datetime.now(timezone.utc) - target_utc
+            ).total_seconds() * 1000
+            logger.info(
+                "T0 reached at %s (skew %+.3f ms)",
+                target_utc.isoformat(), sleep_end_skew_ms,
+            )
             # From here on, we are in STARTING: cancellation could damage
             # hardware init in progress. The flag is cleared in `finally`
             # regardless of success/failure/cancellation.
             self._starting = True
             try:
+                t0 = datetime.now(timezone.utc)
                 await self._backend.start_capture(episode_dir)
+                init_ms = (
+                    datetime.now(timezone.utc) - t0
+                ).total_seconds() * 1000
                 logger.info(
-                    "Scheduled start fired at %s (actual skew %+.3f ms)",
-                    target_utc.isoformat(),
-                    (datetime.now(timezone.utc) - target_utc).total_seconds() * 1000,
+                    "start_capture completed (took %.0f ms)", init_ms,
                 )
             finally:
                 self._starting = False
