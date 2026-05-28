@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -38,16 +37,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from casquette.app.dependencies import get_scheduler
+from casquette.config import settings
 from casquette.scheduler import EpisodeScheduler
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
-# Repo-specific env var. Casquette uses CASQUETTE_PEERS; grabette uses
-# GRABETTE_PEERS. Both formats identical; only the prefix differs so the
+# Peers come from the pydantic Settings (env var CASQUETTE_PEERS, loaded
+# from .env). Format: device_id=url,device_id=url. Grabette uses
+# GRABETTE_PEERS with the same shape — the env-var prefix differs so the
 # two daemons don't accidentally pick up each other's config on a shared host.
-_PEERS_ENV = "CASQUETTE_PEERS"
 
 # How far ahead of "now" the orchestrator schedules T₀. Has to be larger
 # than the worst-case fan-out fan-in time (network + handler scheduling)
@@ -70,7 +70,7 @@ class Peer(BaseModel):
 
 
 def _load_peers() -> list[Peer]:
-    raw = os.environ.get(_PEERS_ENV, "").strip()
+    raw = (settings.peers or "").strip()
     if not raw:
         return []
     peers: list[Peer] = []
@@ -270,6 +270,6 @@ async def sync_stop(scheduler: EpisodeScheduler = Depends(get_scheduler)):
 def list_peers():
     """Echo the configured peer list. Useful as a config sanity check."""
     return {
-        "env_var": _PEERS_ENV,
+        "source": "CASQUETTE_PEERS (env / .env)",
         "peers": [p.model_dump() for p in _load_peers()],
     }
