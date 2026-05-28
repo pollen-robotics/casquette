@@ -130,11 +130,21 @@ class RpiBackend(Backend):
         if not self._capturing:
             raise RuntimeError("Not capturing")
 
+        # Per-step timing — collected into a single summary line at the
+        # bottom. Lets us attribute the time that the orchestrator (and
+        # the user-visible LED) spends waiting on this method.
+        t_phases: dict[str, float] = {}
+
         duration_ms = self._sync.get_timestamp_ms()
 
-        # Stop IMU before camera (camera stop includes ffmpeg muxing)
+        # Stop IMU before camera (camera stop includes ffmpeg muxing).
+        _t = time.monotonic()
         imu_samples = self._imu.stop()
+        t_phases["imu_stop"] = (time.monotonic() - _t) * 1000
+
+        _t = time.monotonic()
         frame_timestamps = self._camera.stop()
+        t_phases["camera_stop"] = (time.monotonic() - _t) * 1000
 
         self._capturing = False
 
@@ -170,6 +180,7 @@ class RpiBackend(Backend):
         )
 
         # Write output files
+        _t = time.monotonic()
         if self._capture_session_dir:
             write_imu_json(
                 imu_samples.accel,
@@ -194,10 +205,18 @@ class RpiBackend(Backend):
             if sync_meta:
                 meta["sync"] = sync_meta
             (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        t_phases["file_writes"] = (time.monotonic() - _t) * 1000
 
         self._sync.reset()
 
-        # Re-initialize hardware for next capture
+        # Re-initialize hardware for next capture.
+        # TODO: this currently runs SYNCHRONOUSLY inside stop_capture,
+        # so the /api/sync/stop RPC (and hence the LED-blink-during-stop)
+        # has to wait for the camera/IMU bring-up. Grabette deferred its
+        # equivalent via loop.call_soon to free the event loop earlier;
+        # we'll do the same once the timing log confirms this is a
+        # meaningful chunk of the stop budget.
+        _t = time.monotonic()
         from casquette.hardware.imu import BMI088Capture
         from casquette.hardware.camera import VideoCapture
         self._camera = VideoCapture(
@@ -205,11 +224,19 @@ class RpiBackend(Backend):
         )
         self._imu = BMI088Capture(self._sync, sample_rate_hz=IMU_HZ, i2c_bus=self._imu_i2c_bus)
         self._camera.init_camera()
+        t_phases["camera_reinit"] = (time.monotonic() - _t) * 1000
+        _t = time.monotonic()
         self._imu.init_sensor()
+        t_phases["imu_reinit"] = (time.monotonic() - _t) * 1000
 
         self._capture_session_dir = None
         self._wall_clock_start = None
-        logger.info("RpiBackend capture stopped")
+        total = sum(t_phases.values())
+        logger.info(
+            "RpiBackend capture stopped  [timing ms: %s  total=%.0f]",
+            " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
+            total,
+        )
         return status
 
     def get_capture_status(self) -> CaptureStatus:
