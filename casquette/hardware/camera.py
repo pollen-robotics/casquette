@@ -155,18 +155,37 @@ class VideoCapture:
             return self._frame_timestamps
 
         self._recording = False
+        import time as _t_mod
+        t: dict[str, float] = {}
+
+        _s = _t_mod.monotonic()
         self._picam2.stop_encoder()
+        t["stop_encoder"] = (_t_mod.monotonic() - _s) * 1000
+
+        _s = _t_mod.monotonic()
         if self.preview:
             try:
                 self._picam2.stop_preview()
             except Exception:
                 pass
         self._picam2.stop()
+        t["picam2_stop"] = (_t_mod.monotonic() - _s) * 1000
+
+        _s = _t_mod.monotonic()
         self._picam2.close()
         self._picam2 = None
         self._encoder = None
+        t["picam2_close"] = (_t_mod.monotonic() - _s) * 1000
 
+        _s = _t_mod.monotonic()
         self._mux_to_mp4()
+        t["mux_to_mp4"] = (_t_mod.monotonic() - _s) * 1000
+
+        logger.info(
+            "VideoCapture.stop  [timing ms: %s  total=%.0f]",
+            " ".join(f"{k}={v:.0f}" for k, v in t.items()),
+            sum(t.values()),
+        )
         return self._frame_timestamps
 
     def _mux_to_mp4(self) -> None:
