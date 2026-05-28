@@ -239,3 +239,18 @@ class RpiBackend(Backend):
             except Exception as e:
                 logger.debug("Failed to capture JPEG: %s", e)
         return None
+
+    def get_camera_exposure_us(self) -> int:
+        if self._camera is None:
+            return 0
+        return int(getattr(self._camera, "exposure_us", 0))
+
+    def set_camera_exposure_us(self, us: int) -> int:
+        if self._camera is None:
+            raise RuntimeError("Camera not initialized")
+        if self._capturing:
+            # Changing exposure during a recording would create a
+            # discontinuity in the video — refuse and let the caller
+            # stop the capture first.
+            raise RuntimeError("Cannot change exposure while capturing")
+        return self._camera.set_exposure_us(int(us))

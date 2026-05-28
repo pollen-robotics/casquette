@@ -97,6 +97,26 @@ class VideoCapture:
 
         self._picam2.start()
 
+    def set_exposure_us(self, us: int) -> int:
+        """Set fixed exposure at runtime. Returns the value actually applied.
+
+        us > 0: fixed exposure in microseconds; auto-gain still active.
+        us == 0: re-enable libcamera auto-exposure (best-effort — exact
+                 behaviour depends on libcamera version, may require a
+                 daemon restart to fully unstick a previously fixed value).
+        """
+        if self._picam2 is None:
+            raise RuntimeError("Camera not initialized")
+        if us > 0:
+            self._picam2.set_controls({"ExposureTime": int(us)})
+            self.exposure_us = int(us)
+            logger.info("Camera exposure → %d µs (fixed)", us)
+        else:
+            self._picam2.set_controls({"AeEnable": True})
+            self.exposure_us = 0
+            logger.info("Camera exposure → AUTO")
+        return self.exposure_us
+
     def _on_frame(self, request) -> None:
         if self._recording:
             metadata = request.get_metadata()

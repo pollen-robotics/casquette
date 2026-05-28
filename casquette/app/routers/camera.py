@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 
 from casquette.app.dependencies import get_backend
 from casquette.backend.base import Backend
+
+
+class _ExposureBody(BaseModel):
+    us: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Exposure time in microseconds. > 0 fixes the shutter (auto-gain "
+            "still active); 0 attempts to restore libcamera auto-exposure "
+            "(may need a daemon restart to fully take effect)."
+        ),
+    )
 
 router = APIRouter(prefix="/api/camera", tags=["camera"])
 
@@ -14,6 +27,22 @@ router = APIRouter(prefix="/api/camera", tags=["camera"])
 # across the response and matches the multipart/x-mixed-replace declaration.
 _MJPEG_BOUNDARY = b"frame"
 _MJPEG_FPS = 15.0
+
+
+@router.get("/exposure")
+def get_exposure(backend: Backend = Depends(get_backend)):
+    return {"us": backend.get_camera_exposure_us()}
+
+
+@router.post("/exposure")
+def set_exposure(body: _ExposureBody, backend: Backend = Depends(get_backend)):
+    try:
+        applied = backend.set_camera_exposure_us(body.us)
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"us": applied}
 
 
 @router.get("/snapshot")
