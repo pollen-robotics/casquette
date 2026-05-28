@@ -5,6 +5,8 @@ Ported from grabette-capture/grabette_capture/video.py.
 
 import logging
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from .sync import SyncManager
@@ -155,38 +157,60 @@ class VideoCapture:
             return self._frame_timestamps
 
         self._recording = False
-        import time as _t_mod
         t: dict[str, float] = {}
 
-        _s = _t_mod.monotonic()
+        _s = time.monotonic()
         self._picam2.stop_encoder()
-        t["stop_encoder"] = (_t_mod.monotonic() - _s) * 1000
+        t["stop_encoder"] = (time.monotonic() - _s) * 1000
 
-        _s = _t_mod.monotonic()
+        _s = time.monotonic()
         if self.preview:
             try:
                 self._picam2.stop_preview()
             except Exception:
                 pass
         self._picam2.stop()
-        t["picam2_stop"] = (_t_mod.monotonic() - _s) * 1000
+        t["picam2_stop"] = (time.monotonic() - _s) * 1000
 
-        _s = _t_mod.monotonic()
+        _s = time.monotonic()
         self._picam2.close()
         self._picam2 = None
         self._encoder = None
-        t["picam2_close"] = (_t_mod.monotonic() - _s) * 1000
+        t["picam2_close"] = (time.monotonic() - _s) * 1000
 
-        _s = _t_mod.monotonic()
-        self._mux_to_mp4()
-        t["mux_to_mp4"] = (_t_mod.monotonic() - _s) * 1000
+        # Background the ffmpeg mux. On Pi Zero 2W ffmpeg takes ~5-7 s
+        # for typical clips and we don't need .mp4 to be ready when
+        # stop_capture returns. The .h264 file is durable on disk; the
+        # .mp4 materialises once the background thread finishes (logged
+        # on completion). If the daemon is killed mid-mux the .h264 is
+        # still recoverable — workstation post-processing can mux it.
+        self._mux_thread = threading.Thread(
+            target=self._mux_to_mp4_background,
+            daemon=True,
+            name="mux-to-mp4",
+        )
+        self._mux_thread.start()
+        t["mux_kickoff"] = 0  # ~0 ms — thread start is essentially instant
 
         logger.info(
-            "VideoCapture.stop  [timing ms: %s  total=%.0f]",
+            "VideoCapture.stop  [timing ms: %s  total=%.0f] "
+            "(mux running in background)",
             " ".join(f"{k}={v:.0f}" for k, v in t.items()),
             sum(t.values()),
         )
         return self._frame_timestamps
+
+    def _mux_to_mp4_background(self) -> None:
+        t0 = time.monotonic()
+        try:
+            self._mux_to_mp4()
+        except Exception:
+            logger.exception("Background mux failed; .h264 left on disk for manual recovery")
+            return
+        logger.info(
+            "Background mux completed in %.0f ms → %s",
+            (time.monotonic() - t0) * 1000, self._output_path,
+        )
 
     def _mux_to_mp4(self) -> None:
         if self._h264_path is None or self._output_path is None:
